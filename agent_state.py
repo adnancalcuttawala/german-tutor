@@ -26,9 +26,7 @@ class AgentState:
         try:
             response = openai.chat.completions.create(
                 model="gpt-5-nano",
-                messages=messages,
-                temperature=0.7,
-                max_completion_tokens=300
+                messages=messages
             )
             reply = response.choices[0].message.content
         except Exception as e:

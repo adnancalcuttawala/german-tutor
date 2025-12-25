@@ -12,25 +12,37 @@ class AgentState:
                 self.state = json.load(f)
         else:
             self.state = {}
+
         self.tz = pytz.timezone("Europe/Berlin")
 
-        # LLM config
-        self.model = "meta-llama/Llama-3.1-8B-Instruct"
-        self.api_token = os.getenv("HF_API_TOKEN")  # Store your Hugging Face token in environment variable
+        # Model configuration
+        self.model = "meta-llama/Llama-3.1-8B-Instruct"  # Chat-compatible model
+        self.api_token = os.getenv("HF_API_TOKEN")      # Hugging Face token
         self.headers = {"Authorization": f"Bearer {self.api_token}"}
 
     def save_memory(self):
         with open(self.memory_file, "w", encoding="utf-8") as f:
             json.dump(self.state, f, ensure_ascii=False, indent=2)
 
-    def call_llm(self, prompt, max_tokens=500):
-        url = f"https://api-inference.huggingface.co/models/{self.model}"
-        payload = {"inputs": prompt, "parameters": {"max_new_tokens": max_tokens}}
-        r = requests.post(url, headers=self.headers, json=payload)
+    def call_llm(self, messages, max_tokens=500):
+        """
+        messages: List of dicts with role/content, e.g.
+        [{"role": "system", "content": "You are a German C1 tutor."},
+         {"role": "user", "content": "Hallo!"}]
+        """
+        url = f"https://api-inference.huggingface.co/v1/models/{self.model}/chat-completion"
+        payload = {"inputs": messages, "parameters": {"max_new_tokens": max_tokens}}
+
         try:
-            return r.json()[0]["generated_text"]
+            r = requests.post(url, headers=self.headers, json=payload, timeout=60)
+            data = r.json()
+            if "error" in data:
+                return f"LLM error: {data['error']}"
+            if "choices" in data and len(data["choices"]) > 0:
+                return data["choices"][0]["message"]["content"]
+            return f"Unexpected LLM response: {data}"
         except Exception as e:
-            return f"LLM error: {e}"
+            return f"LLM request failed: {e}"
 
     def assess_level_and_plan(self, user_input=None, mode="chat"):
         today = str(datetime.now(self.tz).date())
@@ -38,23 +50,22 @@ class AgentState:
             self.state[today] = {"chat": [], "lesson": "", "quiz": ""}
 
         if mode == "chat" and user_input:
-            # Friendly tutor prompt
-            prompt = f"""
-Du bist ein freundlicher Deutschlehrer auf C1 Niveau.
-Der Benutzer schreibt: "{user_input}"
-
-1. Korrigiere kleine Fehler sanft, falls vorhanden.
-2. Gib neue Wörter oder Phrasen, die nützlich sind.
-3. Schreibe eine kurze Antwort, die das Gespräch fortsetzt und den Benutzer zum Üben anregt.
-"""
-            response = self.call_llm(prompt)
+            messages = [
+                {"role": "system", "content": "Du bist ein freundlicher Deutschlehrer auf C1 Niveau. "
+                                               "Gib Feedback, neue Wörter, Grammatiktipps und reagiere freundlich."},
+                {"role": "user", "content": user_input}
+            ]
+            response = self.call_llm(messages)
             self.state[today]["chat"].append({"user": user_input, "agent": response})
             self.save_memory()
             return response
 
         elif mode == "lesson":
-            prompt = "Bitte erstelle meinen täglichen Deutschunterricht auf C1 Niveau basierend auf dem bisherigen Verlauf."
-            lesson = self.call_llm(prompt)
+            messages = [
+                {"role": "system", "content": "Du bist ein Deutschlehrer auf C1 Niveau."},
+                {"role": "user", "content": "Erstelle eine vollständige Lektion für den heutigen Tag basierend auf dem bisherigen Verlauf."}
+            ]
+            lesson = self.call_llm(messages)
             self.state[today]["lesson"] = lesson
             self.save_memory()
             return lesson
@@ -62,14 +73,13 @@ Der Benutzer schreibt: "{user_input}"
         elif mode == "quiz":
             chat_history = self.state[today]["chat"]
             if not chat_history:
-                return "No chat history to generate quiz from."
+                return "Noch kein Chatverlauf, Quiz kann nicht erstellt werden."
             chat_text = " ".join([c["user"] + " " + c["agent"] for c in chat_history])
-            prompt = f"""
-Du bist ein Deutschlehrer auf C1 Niveau. Erstelle 3 kurze Fragen basierend auf folgendem heutigen Chat:
-'{chat_text}'
-Gib die Antworten ebenfalls an, klar markiert.
-"""
-            quiz = self.call_llm(prompt)
+            messages = [
+                {"role": "system", "content": "Du bist ein Deutschlehrer auf C1 Niveau."},
+                {"role": "user", "content": f"Erstelle 3 Quizfragen basierend auf folgendem Chatverlauf:\n{chat_text}"}
+            ]
+            quiz = self.call_llm(messages)
             self.state[today]["quiz"] = quiz
             self.save_memory()
             return quiz

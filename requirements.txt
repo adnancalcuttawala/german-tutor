@@ -2,6 +2,3 @@ gradio
 requests
 schedule
 pytz
-transformers
-torch
-sentence-transformers

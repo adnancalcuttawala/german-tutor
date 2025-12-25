@@ -15,9 +15,11 @@ class AgentState:
 
         self.tz = pytz.timezone("Europe/Berlin")
 
-        # Model configuration
-        self.model = "meta-llama/Llama-3.1-8B-Instruct"  # Chat-compatible model
-        self.api_token = os.getenv("HF_API_TOKEN")      # Hugging Face token
+        # Chat-compatible model
+        self.model = "meta-llama/Llama-3.1-8B-Instruct"
+        self.api_token = os.getenv("HF_API_TOKEN")
+        if not self.api_token:
+            raise ValueError("HF_API_TOKEN environment variable is not set.")
         self.headers = {"Authorization": f"Bearer {self.api_token}"}
 
     def save_memory(self):
@@ -26,9 +28,7 @@ class AgentState:
 
     def call_llm(self, messages, max_tokens=500):
         """
-        messages: List of dicts with role/content, e.g.
-        [{"role": "system", "content": "You are a German C1 tutor."},
-         {"role": "user", "content": "Hallo!"}]
+        messages: list of dicts with roles 'system'/'user'
         """
         url = f"https://api-inference.huggingface.co/v1/models/{self.model}/chat-completion"
         payload = {"inputs": messages, "parameters": {"max_new_tokens": max_tokens}}
@@ -52,7 +52,7 @@ class AgentState:
         if mode == "chat" and user_input:
             messages = [
                 {"role": "system", "content": "Du bist ein freundlicher Deutschlehrer auf C1 Niveau. "
-                                               "Gib Feedback, neue Wörter, Grammatiktipps und reagiere freundlich."},
+                                               "Korrigiere Fehler sanft, gib neue Wörter/Phrasen, Grammatikhinweise und antworte freundlich."},
                 {"role": "user", "content": user_input}
             ]
             response = self.call_llm(messages)

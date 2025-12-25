@@ -1,0 +1,3 @@
+gradio
+faiss-cpu
+sentence-transformers

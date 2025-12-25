@@ -1,81 +1,75 @@
-import os
 import json
-from datetime import date
+import os
 import requests
+from datetime import datetime
+import pytz
 
 class AgentState:
-    def __init__(self):
-        self.memory_file = "memory.json"
-        self.state = self.load_memory()
+    def __init__(self, memory_file="memory.json"):
+        self.memory_file = memory_file
+        if os.path.exists(memory_file):
+            with open(memory_file, "r", encoding="utf-8") as f:
+                self.state = json.load(f)
+        else:
+            self.state = {}
+        self.tz = pytz.timezone("Europe/Berlin")
 
-    def load_memory(self):
-        if os.path.exists(self.memory_file):
-            with open(self.memory_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {
-            "level": None,
-            "history": [],
-            "last_date": None
-        }
+        # LLM config
+        self.model = "meta-llama/Llama-3.1-8B-Instruct"
+        self.api_token = os.getenv("HF_API_TOKEN")  # Store your Hugging Face token in environment variable
+        self.headers = {"Authorization": f"Bearer {self.api_token}"}
 
     def save_memory(self):
         with open(self.memory_file, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, indent=2, ensure_ascii=False)
+            json.dump(self.state, f, ensure_ascii=False, indent=2)
 
-    def call_llm(self, prompt: str) -> str:
-        """
-        Calls Hugging Face router using OpenAI-compatible chat API
-        with meta-llama/Llama-3.1-8B-Instruct.
-        """
+    def call_llm(self, prompt, max_tokens=500):
+        url = f"https://api-inference.huggingface.co/models/{self.model}"
+        payload = {"inputs": prompt, "parameters": {"max_new_tokens": max_tokens}}
+        r = requests.post(url, headers=self.headers, json=payload)
         try:
-            response = requests.post(
-                "https://router.huggingface.co/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "meta-llama/Llama-3.1-8B-Instruct",
-                    "messages": [
-                        {"role": "system", "content": "You are a helpful German tutor."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "max_tokens": 512,
-                    "temperature": 0.7
-                },
-                timeout=60
-            )
-
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-
+            return r.json()[0]["generated_text"]
         except Exception as e:
-            return f"⚠️ LLM error: {str(e)}\nResponse: {response.text if 'response' in locals() else ''}"
+            return f"LLM error: {e}"
 
-    def assess_level_and_plan(self, user_input: str) -> str:
-        today = str(date.today())
-        self.state["history"].append(user_input)
+    def assess_level_and_plan(self, user_input=None, mode="chat"):
+        today = str(datetime.now(self.tz).date())
+        if today not in self.state:
+            self.state[today] = {"chat": [], "lesson": "", "quiz": ""}
 
-        if self.state["last_date"] != today:
-            self.state["last_date"] = today
+        if mode == "chat" and user_input:
+            # Friendly tutor prompt
+            prompt = f"""
+Du bist ein freundlicher Deutschlehrer auf C1 Niveau.
+Der Benutzer schreibt: "{user_input}"
 
-        prompt = f"""
-You are an expert German tutor.
-
-User message:
-"{user_input}"
-
-Your tasks:
-1. Estimate the user's CEFR level (A1–C2)
-2. Briefly explain why
-3. Create a DAILY STUDY PLAN to reach C1:
-   - 5 advanced German vocabulary words with meanings
-   - 2 grammar topics
-   - 2 useful C1-level phrases
-4. End with ONE short practice question
-
-Respond clearly and structured.
+1. Korrigiere kleine Fehler sanft, falls vorhanden.
+2. Gib neue Wörter oder Phrasen, die nützlich sind.
+3. Schreibe eine kurze Antwort, die das Gespräch fortsetzt und den Benutzer zum Üben anregt.
 """
-        reply = self.call_llm(prompt)
-        self.save_memory()
-        return reply
+            response = self.call_llm(prompt)
+            self.state[today]["chat"].append({"user": user_input, "agent": response})
+            self.save_memory()
+            return response
+
+        elif mode == "lesson":
+            prompt = "Bitte erstelle meinen täglichen Deutschunterricht auf C1 Niveau basierend auf dem bisherigen Verlauf."
+            lesson = self.call_llm(prompt)
+            self.state[today]["lesson"] = lesson
+            self.save_memory()
+            return lesson
+
+        elif mode == "quiz":
+            chat_history = self.state[today]["chat"]
+            if not chat_history:
+                return "No chat history to generate quiz from."
+            chat_text = " ".join([c["user"] + " " + c["agent"] for c in chat_history])
+            prompt = f"""
+Du bist ein Deutschlehrer auf C1 Niveau. Erstelle 3 kurze Fragen basierend auf folgendem heutigen Chat:
+'{chat_text}'
+Gib die Antworten ebenfalls an, klar markiert.
+"""
+            quiz = self.call_llm(prompt)
+            self.state[today]["quiz"] = quiz
+            self.save_memory()
+            return quiz

@@ -6,7 +6,7 @@ from datetime import date
 class AgentState:
     def __init__(self):
         self.memory_file = "memory.json"
-        self.api_url = "https://api-inference.huggingface.co/models/google/flan-t5-base"
+        self.api_url = "https://router.huggingface.co/hf-inference/models/google/flan-t5-base"
 
         self.headers = {
             "Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}"

@@ -4,7 +4,7 @@ from agent_state import AgentState
 agent = AgentState()
 
 def chat(user_message):
-    if not user_message.strip():
+    if not user_message or not user_message.strip():
         return "Please write something in German or English 🙂"
     return agent.assess_level_and_plan(user_message)
 
@@ -17,8 +17,8 @@ demo = gr.Interface(
     outputs="text",
     title="🇩🇪 Agentic C1 German Tutor",
     description=(
-        "This AI assesses your German level daily, "
-        "creates a tailored C1 study plan, "
+        "This AI assesses your German level, "
+        "creates a daily C1-focused study plan, "
         "and adapts based on your progress.\n\n"
         "Runs fully on free-tier infrastructure."
     ),

@@ -2,6 +2,6 @@ gradio
 requests
 schedule
 pytz
-threading
-time
-os
+transformers
+torch
+sentence-transformers

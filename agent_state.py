@@ -1,85 +1,62 @@
-import json
+import openai
 import os
-import requests
 from datetime import datetime
-import pytz
+import json
+
+# Set your OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class AgentState:
-    def __init__(self, memory_file="memory.json"):
-        self.memory_file = memory_file
-        if os.path.exists(memory_file):
-            with open(memory_file, "r", encoding="utf-8") as f:
-                self.state = json.load(f)
-        else:
-            self.state = {}
+    def __init__(self):
+        # Store chat history per day
+        self.chat_history = []
+        self.daily_plan = {}
+        self.quiz_history = []
 
-        self.tz = pytz.timezone("Europe/Berlin")
-
-        # Chat-compatible model
-        self.model = "meta-llama/Llama-3.1-8B-Instruct"
-        self.api_token = os.getenv("HF_API_TOKEN")
-        if not self.api_token:
-            raise ValueError("HF_API_TOKEN environment variable is not set.")
-        self.headers = {"Authorization": f"Bearer {self.api_token}"}
-
-    def save_memory(self):
-        with open(self.memory_file, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, ensure_ascii=False, indent=2)
-
-    def call_llm(self, messages, max_tokens=500):
+    def call_llm(self, user_message, system_prompt="You are a German C1 tutor."):
         """
-        messages: list of dicts with roles 'system'/'user'
+        Call GPT-5-nano for a chat response
         """
-        url = f"https://api-inference.huggingface.co/v1/models/{self.model}/chat-completion"
-        payload = {"inputs": messages, "parameters": {"max_new_tokens": max_tokens}}
+        messages = [{"role": "system", "content": system_prompt}]
+        # Include previous conversation for context
+        for entry in self.chat_history[-10:]:  # last 10 messages
+            messages.append(entry)
+        messages.append({"role": "user", "content": user_message})
 
         try:
-            r = requests.post(url, headers=self.headers, json=payload, timeout=60)
-            data = r.json()
-            if "error" in data:
-                return f"LLM error: {data['error']}"
-            if "choices" in data and len(data["choices"]) > 0:
-                return data["choices"][0]["message"]["content"]
-            return f"Unexpected LLM response: {data}"
+            response = openai.chat.completions.create(
+                model="gpt-5-nano",
+                messages=messages,
+                temperature=0.7,
+                max_completion_tokens=300
+            )
+            reply = response.choices[0].message.content
         except Exception as e:
-            return f"LLM request failed: {e}"
+            reply = f"LLM error: {e}"
+
+        # Store in chat history
+        self.chat_history.append({"role": "user", "content": user_message})
+        self.chat_history.append({"role": "assistant", "content": reply})
+
+        return reply
 
     def assess_level_and_plan(self, user_input=None, mode="chat"):
-        today = str(datetime.now(self.tz).date())
-        if today not in self.state:
-            self.state[today] = {"chat": [], "lesson": "", "quiz": ""}
-
+        """
+        mode: "chat", "lesson", "quiz"
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
         if mode == "chat" and user_input:
-            messages = [
-                {"role": "system", "content": "Du bist ein freundlicher Deutschlehrer auf C1 Niveau. "
-                                               "Korrigiere Fehler sanft, gib neue Wörter/Phrasen, Grammatikhinweise und antworte freundlich."},
-                {"role": "user", "content": user_input}
-            ]
-            response = self.call_llm(messages)
-            self.state[today]["chat"].append({"user": user_input, "agent": response})
-            self.save_memory()
-            return response
-
+            return self.call_llm(user_input)
         elif mode == "lesson":
-            messages = [
-                {"role": "system", "content": "Du bist ein Deutschlehrer auf C1 Niveau."},
-                {"role": "user", "content": "Erstelle eine vollständige Lektion für den heutigen Tag basierend auf dem bisherigen Verlauf."}
-            ]
-            lesson = self.call_llm(messages)
-            self.state[today]["lesson"] = lesson
-            self.save_memory()
+            prompt = "Create a daily German C1 lesson for the user based on previous chat history."
+            lesson = self.call_llm(prompt)
+            self.daily_plan[today] = {"lesson": lesson}
             return lesson
-
         elif mode == "quiz":
-            chat_history = self.state[today]["chat"]
-            if not chat_history:
-                return "Noch kein Chatverlauf, Quiz kann nicht erstellt werden."
-            chat_text = " ".join([c["user"] + " " + c["agent"] for c in chat_history])
-            messages = [
-                {"role": "system", "content": "Du bist ein Deutschlehrer auf C1 Niveau."},
-                {"role": "user", "content": f"Erstelle 3 Quizfragen basierend auf folgendem Chatverlauf:\n{chat_text}"}
-            ]
-            quiz = self.call_llm(messages)
-            self.state[today]["quiz"] = quiz
-            self.save_memory()
+            prompt = "Create a small quiz based on today's lesson."
+            quiz = self.call_llm(prompt)
+            self.daily_plan[today]["quiz"] = quiz
+            self.quiz_history.append({today: quiz})
             return quiz
+        else:
+            return "Invalid mode."

@@ -1,22 +1,11 @@
 import os
 import json
-import requests
 from datetime import date
+import requests
 
 class AgentState:
     def __init__(self):
         self.memory_file = "memory.json"
-
-        # Hugging Face router endpoint (REQUIRED)
-        self.api_url = (
-            "https://router.huggingface.co/hf-inference/models/google/flan-t5-base"
-        )
-
-        self.headers = {
-            "Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}",
-            "Content-Type": "application/json"
-        }
-
         self.state = self.load_memory()
 
     def load_memory(self):
@@ -34,41 +23,35 @@ class AgentState:
             json.dump(self.state, f, indent=2, ensure_ascii=False)
 
     def call_llm(self, prompt: str) -> str:
+        """
+        Calls Hugging Face router using OpenAI-compatible chat API.
+        """
+
         response = requests.post(
-            self.api_url,
-            headers=self.headers,
-            json={"inputs": prompt},
+            "https://router.huggingface.co/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "google/flan-t5-base",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 512,
+                "temperature": 0.7
+            },
             timeout=60
         )
 
-        # 1️⃣ Try JSON first
         try:
             data = response.json()
-
-            # HF may return a list
-            if isinstance(data, list) and len(data) > 0:
-                return data[0].get("generated_text", str(data[0]))
-
-            # Or a dict
-            if isinstance(data, dict):
-                if "generated_text" in data:
-                    return data["generated_text"]
-                if "error" in data:
-                    return f"⚠️ Model error: {data['error']}"
-
+            # OpenAI-compatible response parsing
+            return data["choices"][0]["message"]["content"]
         except Exception:
-            pass  # Fall back to raw text
-
-        # 2️⃣ Fallback to raw text
-        text = response.text.strip()
-        if text:
-            return text
-
-        return "⚠️ LLM returned an empty response."
+            # fallback
+            return f"⚠️ LLM error: {response.text}"
 
     def assess_level_and_plan(self, user_input: str) -> str:
         today = str(date.today())
-
         self.state["history"].append(user_input)
 
         if self.state["last_date"] != today:
@@ -91,7 +74,6 @@ Your tasks:
 
 Respond clearly and structured.
 """
-
         reply = self.call_llm(prompt)
         self.save_memory()
         return reply

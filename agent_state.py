@@ -24,31 +24,33 @@ class AgentState:
 
     def call_llm(self, prompt: str) -> str:
         """
-        Calls Hugging Face router using OpenAI-compatible chat API.
+        Calls Hugging Face router using OpenAI-compatible chat API
+        with meta-llama/Llama-3.1-8B-Instruct.
         """
-
-        response = requests.post(
-            "https://router.huggingface.co/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "OpenAssistant/replit-2.0",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 512,
-                "temperature": 0.7
-            },
-            timeout=60
-        )
-
         try:
+            response = requests.post(
+                "https://router.huggingface.co/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "meta-llama/Llama-3.1-8B-Instruct",
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful German tutor."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": 512,
+                    "temperature": 0.7
+                },
+                timeout=60
+            )
+
             data = response.json()
-            # OpenAI-compatible response parsing
             return data["choices"][0]["message"]["content"]
-        except Exception:
-            # fallback
-            return f"⚠️ LLM error: {response.text}"
+
+        except Exception as e:
+            return f"⚠️ LLM error: {str(e)}\nResponse: {response.text if 'response' in locals() else ''}"
 
     def assess_level_and_plan(self, user_input: str) -> str:
         today = str(date.today())

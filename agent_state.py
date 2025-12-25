@@ -1,79 +1,53 @@
+import requests
 import os
-import sqlite3
-import faiss
-import pickle
-from sentence_transformers import SentenceTransformer
+import json
+from datetime import date
+
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 
 class AgentState:
-    def __init__(self, db_path="memory/sqlite.db", faiss_path="memory/faiss_index"):
-        # --- Create memory directories ---
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        os.makedirs(faiss_path, exist_ok=True)
-
-        # --- SQLite structured memory ---
-        self.conn = sqlite3.connect(db_path)
-        self.cursor = self.conn.cursor()
-        self._create_tables()
-
-        # --- FAISS semantic memory ---
-        self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-        self.embedding_dim = 384
-        self.faiss_path = faiss_path
-        self.metadata_file = os.path.join(faiss_path, "metadata.pkl")
-        self._load_faiss_index()
-
-    # -----------------------------
-    # SQLite tables
-    # -----------------------------
-    def _create_tables(self):
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_progress (
-                date TEXT PRIMARY KEY,
-                level TEXT,
-                test_score INTEGER
-            )
-        """)
-        self.conn.commit()
-
-    def save_progress(self, date, level, test_score):
-        self.cursor.execute(
-            "INSERT OR REPLACE INTO user_progress VALUES (?,?,?)",
-            (date, level, test_score)
-        )
-        self.conn.commit()
-
-    # -----------------------------
-    # FAISS memory
-    # -----------------------------
-    def _load_faiss_index(self):
-        index_file = os.path.join(self.faiss_path, "index.faiss")
-        if os.path.exists(index_file):
-            self.index = faiss.read_index(index_file)
-            if os.path.exists(self.metadata_file):
-                with open(self.metadata_file, "rb") as f:
-                    self.metadata = pickle.load(f)
-            else:
-                self.metadata = []
+    def __init__(self):
+        self.memory_file = "memory.json"
+        if os.path.exists(self.memory_file):
+            self.memory = json.load(open(self.memory_file, "r", encoding="utf-8"))
         else:
-            self.index = faiss.IndexFlatL2(self.embedding_dim)
-            self.metadata = []
+            self.memory = {
+                "level": "unknown",
+                "daily_plan": {},
+                "history": []
+            }
 
-    def add_to_faiss(self, text, category=None, mistake=None):
-        vec = self.embedding_model.encode([text]).astype("float32")
-        self.index.add(vec)
-        self.metadata.append({"text": text, "category": category, "mistake": mistake})
-        self._save_faiss()
+    def call_llm(self, prompt):
+        headers = {
+            "Authorization": f"Bearer {HF_API_TOKEN}"
+        }
+        payload = {
+            "inputs": prompt,
+            "parameters": {"max_new_tokens": 400}
+        }
+        r = requests.post(
+            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
+        return r.json()[0]["generated_text"]
 
-    def _save_faiss(self):
-        faiss.write_index(self.index, os.path.join(self.faiss_path, "index.faiss"))
-        with open(self.metadata_file, "wb") as f:
-            pickle.dump(self.metadata, f)
+    def assess_level_and_plan(self, user_input):
+        prompt = f"""
+You are a C1 German teacher.
+User message:
+{user_input}
 
-    def query_faiss(self, query_text, top_k=5):
-        vec = self.embedding_model.encode([query_text]).astype("float32")
-        D, I = self.index.search(vec, top_k)
-        results = []
-        for idx in I[0]:
-            if idx < len(self.metadata):
-                results.append(self.metadata[idx])
-        return results
+1. Assess the user's CEFR level.
+2. Create a daily plan with:
+- Vocabulary (5 items)
+- Grammar (2 topics)
+- Phrase practice
+Return JSON.
+"""
+        response = self.call_llm(prompt)
+        self.memory["history"].append(user_input)
+        json.dump(self.memory, open(self.memory_file, "w", encoding="utf-8"), indent=2)
+        return response

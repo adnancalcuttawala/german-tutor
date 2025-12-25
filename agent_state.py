@@ -34,7 +34,7 @@ class AgentState:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "google/flan-t5-base",
+                "model": "OpenAssistant/replit-2.0",
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 512,
                 "temperature": 0.7
